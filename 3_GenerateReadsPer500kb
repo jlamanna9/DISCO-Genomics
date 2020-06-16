@@ -1,0 +1,12 @@
+#MarkDuplicates
+java -jar ./picard.jar MarkDuplicates I= trimmed_1A_S1_L001_R1_001_sorted.bam O= trimmed_1A_S1_L001_R1_001_sorted_rmdup.bam M= trimmed_1A_S1_L001_R1_001_sorted_rmdup.metrics ASSUME_SORTED=true VALIDATION_STRINGENCY=LENIENT REMOVE_DUPLICATES=true
+
+#RemoveDuplicates
+./samtools-1.8/samtools index trimmed_1A_S1_L001_R1_001_sorted_rmdup.bam
+./samtools-1.8/samtools view -bu trimmed_1A_S1_L001_R1_001_sorted_rmdup.bam | ./bamToBed -i stdin > trimmed_1A_S1_L001_R1_001_sorted_rmdup.bed
+
+#GenerateReadsPer500kbBin
+cat trimmed_1A_S1_L001_R1_001_sorted_rmdup.bed | sed -e "s/-1/0/g" | awk '{print $1"\t"$2"\t"$2+1}' > trimmed_1A_S1_L001_R1_001_sorted_rmdup_onebasereads.bed
+./intersectBed -a trimmed_1A_S1_L001_R1_001_sorted_rmdup_onebasereads.bed -b ./b37.40mer.nonUniqSites.merged.bed  -v > trimmed_1A_S1_L001_R1_001_sorted_rmdup_onebasereads_winIntersect.bed
+./coverageBed -b trimmed_1A_S1_L001_R1_001_sorted_sorted_rmdup_onebasereads_winIntersect.bed -a ./all.window.40mer.b37.map.500kb.bed -counts > trimmed_1A_S1_L001_R1_001_sorted_rmdup_onebasereads_winIntersect_500kb.cov
+cat trimmed_1A_S1_L001_R1_001_sorted_rmdup_onebasereads_winIntersect_500kb.cov | sed -e "s/X/23/g" | sed -e "s/Y/24/g" | sort -k 1 -n -k 2 -n > trimmed_1A_S1_L001_R1_001_sorted_rmdup_onebasereads_winIntersect_500kb_SORT.cov
