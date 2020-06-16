@@ -1,0 +1,203 @@
+Code adapted from Wierman et al. (Wierman, M. B., Burbulis, I. E., Chronister, W. D., Bekiranov, S. & McConnell, M. J. in Genomic Mosaicism in Neurons and Other Cell Types (eds. Frade, J. M. & Gage, F. H.) 109–131 (Springer New York, 2017)).
+
+#Set arguments (directory and *SORT.cov file)
+#args <- commandArgs(trailing=T)
+directory <-"./"#(args[1])
+infile <- "trimmed_1A_S1_L001_R1_001_sorted_rmdup_onebasereads_winIntersect_500kb_SORT.cov"#(args[1])
+
+splitfname <- strsplit(infile,"\\.")[[1]]
+if(length(splitfname)==2){
+  header <- splitfname[1]
+} else if(length(splitfname)>2){
+  header <- splitfname[1]
+  for(i in 2:(length(splitfname)-1)){
+    namepiece <-splitfname[i]
+    header <-paste(header, namepiece, sep=".")
+  }
+}
+
+splitsampname <- strsplit(header,"_")[[1]]
+if(length(splitsampname)==2){
+  sampname <- splitsampname[1]
+} else if(length(splitsampname)>2){
+  sampname <- splitsampname[1]
+  for(i in 2:(length(splitsampname)-2)){
+    sampnamepiece <-splitsampname[i]
+    sampname <-paste(sampname, sampnamepiece, sep="_")
+  }
+}
+outfile <-paste(header,"norm.num", sep="_")
+outLong <- paste(header,"norm.num.long",sep='_')
+outShort <- paste(header,"norm.num.short",sep='_')
+outPlot <- paste(header,"PLOT.png",sep='_')
+outfile <-paste(directory,outfile, sep='/')
+outLong <- paste(directory,outLong,sep='/')
+outShort <- paste(directory,outShort,sep='/')
+outPlot <- paste(directory,outPlot,sep='/')
+
+#source("http://bioconductor.org/biocLite.R")
+#biocLite("DNAcopy")
+
+
+#Our (slightly modified) version of a function by Sacha Epskamp for checking for the presence of a package and installing if absent.
+#http://stackoverflow.com/questions/9341635/how-can-i-check-for-installed-r-packages-before-running-install-packages
+pkgTestBC <- function(x){
+	if(!require(x,character.only=TRUE)){
+		source("http://bioconductor.org/biocLite.R")
+		biocLite(x)
+		if(!require(x,character.only=TRUE)) stop("Package not found")
+	}
+}
+
+pkgTest <- function(x){
+	if(!require(x,character.only=TRUE)){
+		install.packages(x)
+		if(!require(x,character.only=TRUE)) stop("Package not found")
+	}
+}
+
+pkgTestBC("DNAcopy")
+#pkgTest("sqldf")
+pkgTest("ggplot2")
+
+#Load packages
+library(DNAcopy)
+library(MASS) #MASS pkg usually built-in
+#library(sqldf) #Package to use SQL-style databases (for loading big tables).
+library(ggplot2)
+
+#Set working directory and read in file.
+#setwd(directory)
+
+fullfilepath <-paste(directory,infile,sep='/')
+f <- file(fullfilepath)
+cov.data <- read.table(fullfilepath, header=FALSE, sep="")
+#cov.data <- sqldf("select * from f", dbname = tempfile(), file.format = list(header = F, row.names = F, sep='\t'))
+
+print(ncol(cov.data))
+#cov.data <- cbind(cov.data,0,0)
+print(ncol(cov.data))
+
+#names(cov.data)<-c("Index","Chrom","Start","End","GCfrac","Nfrac","Count")
+
+names(cov.data)<-c("Chrom","Start","End","GCfrac","Nfrac","Count")
+
+cov.data<-subset(cov.data, select=c("Chrom","Start","End","GCfrac","Nfrac","Count"))
+
+#Compute total reads and mean per window and append to file.
+meanperwindow <- mean(cov.data$Count)
+totalsampreads <-sum(cov.data$Count)
+meantotoutline <-paste(sampname,meanperwindow,totalsampreads, sep="\t")
+rawmeanfilename <- "All_counts_means.txt"
+meanfilename <-paste(directory,rawmeanfilename,sep='')
+write(meantotoutline, file=meanfilename, append=TRUE)
+
+#Store chromosomes as numeric
+#Note:  This automatically converts X to 23 and Y to 24.
+#cov.data$Chrom <-as.numeric(cov.data$Chrom)
+
+#Eliminate sex chromosomes
+#cov.data<-subset(cov.data, Chrom!='X')
+#cov.data<-subset(cov.data, Chrom!='Y')
+
+#binSize <- c(0,34:45,47,49,53,100)
+#binSize <- binSize/100
+binSize <- c(0,34:45,47,49,53,100)
+binSize <- binSize/100
+
+#Assign each row of the coverage file to a bin and add the bin id to the data frame.
+binid<-vector()
+for(i in 1:nrow(cov.data)){
+  thebin <-0
+  gc <- cov.data$GCfrac[i]
+  for(j in 1:(length(binSize)-1)){
+    low <-binSize[j]
+    high <- binSize[j+1]
+    if(low <= gc){
+      if(gc < high){
+        thebin <- j
+        binid<-c(binid,thebin)  
+      }
+    }
+  }
+}
+
+#Adds the bin id column to the data frame
+cov.data$bin <- binid
+
+#Compute total number of reads
+totreads <- sum(cov.data$Count)
+millreads <- totreads/1000000
+
+head(cov.data)
+print(totreads)
+print(millreads)
+
+#Loop through list of the bin ids.
+#Remove outliers from each bin.
+cov.data.final<-{}
+for(k in 1:16){
+   temptable <- subset(cov.data, bin==k)
+   countmad <-mad(temptable$Count)
+   countmean <-mean(temptable$Count)
+   countmax <- countmean + (countmad * 4)
+   countmin <- countmean - (countmad * 4)
+   indexlist <-vector()
+   for(m in 1:length(temptable$Count)){
+     thecount <- temptable$Count[m]
+     if(thecount < countmin){
+       indexlist <- c(indexlist,m)
+     }
+     else if(thecount > countmax){
+       indexlist <- c(indexlist,m)
+     }
+   }
+   if(length(indexlist)>0){
+    temptable.noout <- temptable[-indexlist,]
+   }
+   else{
+     temptable.noout <-temptable
+   }
+   temptable.noout<-subset(temptable.noout, Chrom!=23)
+   temptable.noout<-subset(temptable.noout, Chrom!=24)
+#   binmedian <-median(temptable$Count)
+   binmedian <-median(temptable.noout$Count)
+   thestats <-fitdistr(temptable.noout$Count, "normal")
+   binmean <- thestats$estimate[1]
+   binsd <- thestats$estimate[2]
+   zvals <-vector()
+   pvals <-vector()
+   l2fvals <-vector()
+   rpkmvals <-vector()
+   estvals <-vector()
+   for(n in 1:length(temptable$Count)){
+     thecount <- temptable$Count[n]
+#     countz <- (binmean - thecount) / (binsd/sqrt(length(temptable.noout$Count)))
+     countz <- (thecount - binmean) / (binsd)     
+#     countp <- dnorm(countz)
+     countp <- 2*pnorm(-abs(countz))
+     countl2f <- log2(thecount/binmean)
+#     countrpkm <- thecount / 500 / millreads
+     countrpkm <- thecount / millreads
+     countest <- 2*(thecount / binmedian)
+     zvals <-c(zvals, countz)
+     pvals <-c(pvals, countp)                                                                              
+     l2fvals <-c(l2fvals, countl2f)
+     rpkmvals <-c(rpkmvals, countrpkm)
+     estvals <-c(estvals, countest)
+   }
+   temptable$zscore <- zvals
+   temptable$pvalue <- pvals
+   temptable$Log2_foldchange <- l2fvals
+   temptable$rpkm <- rpkmvals
+   temptable$est_copy <- estvals
+   cov.data.final <-rbind(cov.data.final, temptable)
+}
+
+head(cov.data.final)
+
+#Sort the data frame by the chromosome, then the start position
+cov.data.final <-cov.data.final[with(cov.data.final, order(Chrom, Start)), ]
+#Write the table to a file.
+write.table(cov.data.final, file=outfile, row.names=FALSE, col.names=FALSE, sep="\t", quote=FALSE)
+#write.table(cov.data.final, file="trimmed_1A_S1_L001_R1_001_sorted_rmdup_onebasereads_winIntersect_500kb_SORT_NORM.txt", row.names=FALSE, col.names=FALSE, sep="\t", quote=FALSE)
